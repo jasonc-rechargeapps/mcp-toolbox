@@ -166,6 +166,50 @@ func TestApply_ExactFieldStillExact(t *testing.T) {
 	}
 }
 
+func TestApply_EmbeddedJSONString(t *testing.T) {
+	masks := compileMasks(t, []Mask{
+		{Field: "account_id", Pattern: `.*`, Replacement: "[REDACTED]"},
+	})
+	input := []any{
+		map[string]any{
+			"id":         float64(1),
+			"json_field": `{"account_id":"000000099999999","cart_enabled":true}`,
+		},
+	}
+	got := apply(input, masks)
+	want := []any{
+		map[string]any{
+			"id":         float64(1),
+			"json_field": `{"cart_enabled":true,"account_id":"[REDACTED]"}`,
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestApply_EmbeddedJSONStringNestedObject(t *testing.T) {
+	masks := compileMasks(t, []Mask{
+		{Field: `.*_key`, Pattern: `.*`, Replacement: "[REDACTED]"},
+	})
+	input := []any{
+		map[string]any{
+			"id":         float64(1),
+			"json_field": `{"aes_migration_token_data":{"api_key":"enc123","public_key":"enc456"},"cart_enabled":true}`,
+		},
+	}
+	got := apply(input, masks)
+	want := []any{
+		map[string]any{
+			"id":         float64(1),
+			"json_field": `{"aes_migration_token_data":{"public_key":"[REDACTED]","api_key":"[REDACTED]"},"cart_enabled":true}`,
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestCompile_InvalidPattern(t *testing.T) {
 	_, err := compile([]Mask{
 		{Field: "f", Pattern: `[invalid`, Replacement: "X"},

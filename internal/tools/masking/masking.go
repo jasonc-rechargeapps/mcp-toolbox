@@ -104,6 +104,18 @@ func applyToValue(v any, masks []compiledMask) any {
 			val[key] = fieldVal
 		}
 		return val
+	case string:
+		var parsed any
+		if err := json.Unmarshal([]byte(val), &parsed); err == nil {
+			switch parsed.(type) {
+			case map[string]any, []any:
+				recursed := applyToValue(parsed, masks)
+				if b, err := json.Marshal(recursed); err == nil {
+					return string(b)
+				}
+			}
+		}
+		return val
 	default:
 		return v
 	}
