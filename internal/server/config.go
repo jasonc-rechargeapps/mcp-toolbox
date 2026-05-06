@@ -16,6 +16,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -30,6 +31,7 @@ import (
 	"github.com/googleapis/mcp-toolbox/internal/prompts"
 	"github.com/googleapis/mcp-toolbox/internal/sources"
 	"github.com/googleapis/mcp-toolbox/internal/tools"
+	"github.com/googleapis/mcp-toolbox/internal/tools/masking"
 	"github.com/googleapis/mcp-toolbox/internal/util"
 )
 
@@ -320,6 +322,13 @@ func UnmarshalYAMLToolConfig(ctx context.Context, name string, r map[string]any)
 		r["authRequired"] = []string{}
 	}
 
+	// Extract masks before strict decoding; strict decoder rejects unknown fields.
+	masks, err := extractMasks(r)
+	if err != nil {
+		return nil, fmt.Errorf("tool %q: %w", name, err)
+	}
+	delete(r, "masks")
+
 	// validify parameter references
 	if rawParams, ok := r["parameters"]; ok {
 		if paramsList, ok := rawParams.([]any); ok {
@@ -366,7 +375,25 @@ func UnmarshalYAMLToolConfig(ctx context.Context, name string, r map[string]any)
 	if err != nil {
 		return nil, err
 	}
-	return toolCfg, nil
+	return masking.NewMaskedToolConfig(toolCfg, masks)
+}
+
+// extractMasks pulls the "masks" field from a raw tool config map and parses
+// it as []masking.Mask. Returns nil if the field is absent.
+func extractMasks(r map[string]any) ([]masking.Mask, error) {
+	raw, ok := r["masks"]
+	if !ok {
+		return nil, nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("unable to serialize masks: %w", err)
+	}
+	var masks []masking.Mask
+	if err := json.Unmarshal(b, &masks); err != nil {
+		return nil, fmt.Errorf("invalid masks config: %w", err)
+	}
+	return masks, nil
 }
 
 func UnmarshalYAMLToolsetConfig(ctx context.Context, name string, r map[string]any) (tools.ToolsetConfig, error) {
