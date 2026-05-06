@@ -85,18 +85,19 @@ func applyToValue(v any, masks []compiledMask) any {
 		}
 		return val
 	case map[string]any:
-		for key := range val {
-			fieldVal := val[key]
+		for key, fieldVal := range val {
+			// Recurse into nested structures first.
+			fieldVal = applyToValue(fieldVal, masks)
+
 			for _, m := range masks {
-				if !m.fieldRe.MatchString(key) {
-					continue
-				}
-				switch s := fieldVal.(type) {
-				case string:
-					fieldVal = m.re.ReplaceAllString(s, m.replacement)
-				default:
-					if m.re.MatchString(fmt.Sprintf("%v", fieldVal)) {
-						fieldVal = m.replacement
+				if m.fieldRe.MatchString(key) {
+					switch s := fieldVal.(type) {
+					case string:
+						fieldVal = m.re.ReplaceAllString(s, m.replacement)
+					default:
+						if m.re.MatchString(fmt.Sprintf("%v", fieldVal)) {
+							fieldVal = m.replacement
+						}
 					}
 				}
 			}
