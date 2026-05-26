@@ -249,6 +249,66 @@ func TestNewMaskedToolConfig_InvalidPattern(t *testing.T) {
 	}
 }
 
+// TestExpandMasksForAliases_BypassViaAS is a regression test for the SQL alias
+// bypass: "SELECT token AS t1" must still redact the value under key "t1".
+func TestExpandMasksForAliases_BypassViaAS(t *testing.T) {
+	masks := compileMasks(t, []Mask{
+		{Field: "token", Pattern: `.*`, Replacement: "[REDACTED]"},
+	})
+	expanded := expandMasksForAliases("SELECT id, token AS t1 FROM api_token LIMIT 1", masks)
+	input := []any{
+		map[string]any{"id": float64(1), "t1": "secret-token-value"},
+	}
+	got := apply(input, expanded)
+	want := []any{
+		map[string]any{"id": float64(1), "t1": "[REDACTED]"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("alias bypass not prevented (-want +got):\n%s", diff)
+	}
+}
+
+func TestExpandMasksForAliases_WildcardFieldAlias(t *testing.T) {
+	masks := compileMasks(t, []Mask{
+		{Field: `.*_token`, Pattern: `.*`, Replacement: "[REDACTED]"},
+	})
+	expanded := expandMasksForAliases("SELECT access_token AS at, refresh_token AS rt FROM api_token", masks)
+	input := []any{
+		map[string]any{"at": "tok1", "rt": "tok2", "name": "visible"},
+	}
+	got := apply(input, expanded)
+	want := []any{
+		map[string]any{"at": "[REDACTED]", "rt": "[REDACTED]", "name": "visible"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("wildcard alias bypass not prevented (-want +got):\n%s", diff)
+	}
+}
+
+func TestExpandMasksForAliases_NoAliasUnchanged(t *testing.T) {
+	masks := compileMasks(t, []Mask{
+		{Field: "token", Pattern: `.*`, Replacement: "[REDACTED]"},
+	})
+	before := len(masks)
+	expanded := expandMasksForAliases("SELECT id, token FROM api_token", masks)
+	if len(expanded) != before {
+		t.Errorf("expected mask count unchanged, got %d (was %d)", len(expanded), before)
+	}
+}
+
+func TestExpandMasksForAliases_CaseInsensitiveAS(t *testing.T) {
+	masks := compileMasks(t, []Mask{
+		{Field: "token", Pattern: `.*`, Replacement: "[REDACTED]"},
+	})
+	expanded := expandMasksForAliases("select token as t1 from api_token", masks)
+	input := []any{map[string]any{"t1": "secret"}}
+	got := apply(input, expanded)
+	want := []any{map[string]any{"t1": "[REDACTED]"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("case-insensitive AS bypass not prevented (-want +got):\n%s", diff)
+	}
+}
+
 // stubToolConfig satisfies tools.ToolConfig for testing.
 type stubToolConfig struct{}
 

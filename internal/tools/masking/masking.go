@@ -44,6 +44,36 @@ type compiledMask struct {
 	replacement string
 }
 
+// sqlAliasRe matches "<word> AS <word>" patterns in SQL queries (case-insensitive)
+// to detect when a masked column is renamed via an alias.
+var sqlAliasRe = regexp.MustCompile(`(?i)\b(\w+)\s+AS\s+(\w+)`)
+
+// expandMasksForAliases parses sqlStr for "col AS alias" pairs and returns a
+// new mask slice that also redacts any alias whose source column matches an
+// existing mask. This prevents bypassing masking via SQL column aliasing.
+func expandMasksForAliases(sqlStr string, masks []compiledMask) []compiledMask {
+	matches := sqlAliasRe.FindAllStringSubmatch(sqlStr, -1)
+	if len(matches) == 0 {
+		return masks
+	}
+	expanded := append([]compiledMask(nil), masks...)
+	for _, m := range matches {
+		origCol, alias := m[1], m[2]
+		for _, mask := range masks {
+			if mask.fieldRe.MatchString(origCol) {
+				aliasFieldRe := regexp.MustCompile("^(?:" + regexp.QuoteMeta(alias) + ")$")
+				expanded = append(expanded, compiledMask{
+					fieldRe:     aliasFieldRe,
+					re:          mask.re,
+					replacement: mask.replacement,
+				})
+				break
+			}
+		}
+	}
+	return expanded
+}
+
 func compile(masks []Mask) ([]compiledMask, error) {
 	out := make([]compiledMask, len(masks))
 	for i, m := range masks {
@@ -167,7 +197,11 @@ func (t *MaskedTool) Invoke(ctx context.Context, rp tools.SourceProvider, params
 	if err != nil {
 		return nil, err
 	}
-	return apply(result, t.masks), nil
+	masks := t.masks
+	if sqlStr, ok := params.AsMap()["sql"].(string); ok {
+		masks = expandMasksForAliases(sqlStr, masks)
+	}
+	return apply(result, masks), nil
 }
 
 func (t *MaskedTool) EmbedParams(ctx context.Context, params parameters.ParamValues, models map[string]embeddingmodels.EmbeddingModel) (parameters.ParamValues, error) {
@@ -189,3 +223,5 @@ func (t *MaskedTool) GetAuthTokenHeaderName(sp tools.SourceProvider) (string, er
 }
 
 func (t *MaskedTool) GetParameters() parameters.Parameters { return t.inner.GetParameters() }
+
+func (t *MaskedTool) GetScopesRequired() []string { return t.inner.GetScopesRequired() }
